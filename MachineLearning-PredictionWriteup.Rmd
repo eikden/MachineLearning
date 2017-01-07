@@ -1,0 +1,165 @@
+---
+title: 'Practical ML Project: Prediction Assignment WriteUp'
+author: "Yeoh Eik Den"
+date: "1/7/2017"
+output: html_document
+---
+
+## 1. Overview
+
+This document is the report for Practical Machine Learning. It was built up in RStudio, using its knitr functions, and to be published in html format. This research outcome is to use for answer quiz and a prediction assignment writeup. The main goal of the project is to predict the manner in which 6 participants performed some exercise as described below. 
+
+The "classe" variable in the training set. The machine learning algorithm described here is applied to the 20 test cases available in the test data and the predictions are submitted in appropriate format to the Course Project Prediction Quiz for automated grading.
+
+## 2. Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## 3. Data Loading and Exploratory Analysis
+
+### 3.1 Data Source
+There are two different set of data that use for training data and test data. 
+Training data available to download from following link: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+Test data available to download from following link: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+### 3.2 Library setup
+```{r}
+rm(list=ls())
+setwd("~/Documents/Study & Research/R Project/Machine Learning")
+library(knitr)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(randomForest)
+library(caret)
+library(corrplot)
+set.seed(301)
+```
+
+### 3.3 Data Loading and Cleaning
+The next step is loading the dataset from the URL provided above. The training dataset is then partinioned in 2 to create a Training set (70% of the data) for the modeling process and a Test set (with the remaining 30%) for the validations. The testing dataset is not changed and will only be used for the quiz results generation.
+
+```{r}
+traindata <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testdata <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+training <- read.csv(url(traindata))
+testing <- read.csv(url(testdata))
+
+inTrain <- createDataPartition(training$classe, p=0.7, list=FALSE)
+trainingset <- training[inTrain,]
+testset <- training[-inTrain,]
+dim(trainingset)
+dim(testset)
+```
+
+Both created datasets have 160 variables. Those variables have plenty of NA, that can be removed with the cleaning procedures below. The Near Zero variance (NZV) variables are also removed and the ID variables as well.
+
+```{r}
+NZV <- nearZeroVar(trainingset)
+trainingset <- trainingset[, -NZV]
+testset  <- testset[, -NZV]
+dim(testset)
+dim(trainingset)
+
+# remove variables that are mostly NA
+AllNA    <- sapply(trainingset, function(x) mean(is.na(x))) > 0.95
+trainingset <- trainingset[, AllNA==FALSE]
+testset  <- testset[, AllNA==FALSE]
+dim(trainingset)
+dim(testset)
+
+# remove identification only variables (columns 1 to 5)
+trainingset <- trainingset[, -(1:5)]
+testset  <- testset[, -(1:5)]
+dim(trainingset)
+dim(testset)
+```
+
+The number of variables for the analysis has been reduced to 54 only.
+
+### 3.4 Correlation Analysis
+A correlation among variables is analysed before proceeding to the modeling procedures.
+```{r}
+corMatrix <- cor(trainingset[, -54])
+corrplot(corMatrix, order = "FPC", method = "color", type = "lower", 
+         tl.cex = 0.8, tl.col = rgb(0, 0, 0))
+```
+
+The correlation variables are shown in the above graph indicated that the dark colors are highly correlation. To make an ever more compare analysis for principal components analysis could be performed as pre-processing step for the datasets. Nevertheless, as the correlations are quite few, this step will not be applied for this assignment.
+
+## 4. Prediction Model Building
+Three popular methods will be applied to model the regressions (in the Train dataset) and the best one (with higher accuracy when applied to the Test dataset) will be used for the quiz predictions. The methods are: Random Forests, Decision Tree and Generalized Boosted Model, as described below. A Confusion Matrix is plotted at the end of each analysis to better visualize the accuracy of the models.
+
+### 4.1 Random Forests
+```{r}
+# model fit
+set.seed(301)
+controlRF <- trainControl(method="cv", number=3, verboseIter=FALSE)
+modFitRandForest <- train(classe~., data=trainingset, method="rf",
+                          trControl=controlRF)
+modFitRandForest$finalModel
+
+# prediction on Test dataset
+predictRandForest <- predict(modFitRandForest, newdata=testset)
+confMatRandForest <- confusionMatrix(predictRandForest, testset$classe)
+confMatRandForest
+
+# plot matrix results
+plot(confMatRandForest$table, col = confMatRandForest$byClass, 
+     main = paste("Random Forest - Accuracy =",
+                  round(confMatRandForest$overall['Accuracy'], 4)))
+```
+
+### 4.2 Method: Decision Trees
+```{r}
+# model fit
+set.seed(301)
+modFitDecTree <- rpart(classe ~ ., data=trainingset, method="class")
+fancyRpartPlot(modFitDecTree)
+
+# prediction on Test dataset
+predictDecTree <- predict(modFitDecTree, newdata=testset, type="class")
+confMatDecTree <- confusionMatrix(predictDecTree, testset$classe)
+confMatDecTree
+
+# plot matrix results
+plot(confMatDecTree$table, col = confMatDecTree$byClass, 
+     main = paste("Decision Tree - Accuracy =",
+                  round(confMatDecTree$overall['Accuracy'], 4)))
+```
+
+### 4.3 Method: Generalized Boosted Model
+```{r}
+# model fit
+set.seed(301)
+controlGBM <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+modFitGBM  <- train(classe ~ ., data=trainingset, method = "gbm",
+                    trControl = controlGBM, verbose = FALSE)
+
+modFitGBM$finalModel
+
+# prediction on Test dataset
+predictGBM <- predict(modFitGBM, newdata=testset)
+confMatGBM <- confusionMatrix(predictGBM, testset$classe)
+confMatGBM
+
+# plot matrix results
+plot(confMatGBM$table, col = confMatGBM$byClass, 
+     main = paste("GBM - Accuracy =", round(confMatGBM$overall['Accuracy'], 4)))
+```
+
+## 5. Apply selected model to test data
+The accuracy of the 3 regression modeling methods above are:
+
+Random Forest : 0.9968;
+Decision Tree : 0.7843;
+GBM : 0.9839;
+
+In that case, the Random Forest model will be applied to predict the 20 quiz results (testing dataset) as shown below.
+
+```{r}
+predictTEST <- predict(modFitRandForest, newdata=testing)
+predictTEST
+```
+
